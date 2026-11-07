@@ -1,0 +1,18 @@
+# Dependencies (none should exist here; keep the package dependency-free)
+node_modules/
+
+# Logs and diagnostics
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# Scratch files
+*.tmp
+*.bak

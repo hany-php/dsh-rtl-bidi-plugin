@@ -1,0 +1,10 @@
+# RTL/bidi browser plugin.
+# The Host half is a no-op: this bundle contributes browser presentation only.
+# The Browser half (exports["./client"], declared under dsh.client) injects the
+# bidi stylesheet and marks every text block with dir="auto".
+#
+# A profile patch appends rows only through `insert:`; a bare row is an override
+# and is skipped when no row with that id exists.
+- insert:
+    - id: rtl-bidi
+      name: 'rtl-bidi-plugin'

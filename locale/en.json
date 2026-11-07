@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Arabic and English text direction",
+    "description": "Gives each paragraph its own base direction so mixed Arabic and English text reads correctly, while code and math stay left-to-right."
+  }
+}
