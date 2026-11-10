@@ -84,7 +84,7 @@ There is no build tool, no `node_modules`, no bundler. The browser artifact is h
    - `applyDraftDirection()` — a draft-level `dir` on the editor surface (fallback for content outside any line, and the starting direction when the first line is neutral);
    - `applyLineDirections()` — each line gets its **own** `dir` from its own first strong character, so an Arabic line is RTL and an English line in the same draft is LTR; a neutral line inherits the direction of the nearest decisive line above it (so Enter does not flip the caret);
    - `lineText()` — per-line text, skipping placeholder and decorator (chip) subtrees;
-   - the CSS: surface `unicode-bidi: normal`, lines `unicode-bidi: normal` + `direction: revert !important` (the line's own `[dir]` decides) and a `:not([dir])` rule re-applying `inherit`. **Never `plaintext`** on the composer — it re-resolves each line from its own content and recreates the bug.
+   - the CSS: surface `unicode-bidi: normal`; lines `unicode-bidi: normal` + `text-align: start` and **no `direction` declaration at all** (any author `direction` — `inherit` or `revert` — overrides the line's own `[dir]`; see Attempt 5), plus `p:not([dir]) { direction: inherit }` for lines the engine has not reached yet. **Never `plaintext`** on the composer — it re-resolves each line from its own content and recreates the bug.
    The `MutationObserver` watches `attributeFilter: ["dir"]` and re-resolves in the same task. The composer `dir` goes on the **editor surface only** (a block box, no flex layout), never on its shell.
 
    Behaviour chosen by the user (2026-11-10): the direction scope is **per line**, and a new empty line **inherits the line above it**.
@@ -203,6 +203,32 @@ the nearest decisive line above it, and the surface keeps a draft-level
 fallback (`applyDraftDirection`). Also fixed: an emptied draft now forgets its
 old direction instead of carrying a stale `rtl`/`ltr` into the next message.
 
+### Attempt 5 (v0.4.1) — the `direction: revert` trap
+0.4 resolved each line correctly in JS but the English line still rendered RTL.
+The CSS carried `direction: revert !important` on the composer lines, reasoned
+to mean "let the element's own `dir` attribute decide". That is wrong: with
+`!important` from the author origin, `revert` rolls back to the **user-agent**
+origin, and the UA default for `<p>` is `direction: inherit`, so the line
+inherited RTL from the surface and **ignored its own `dir="ltr"`**.
+
+Measured in headless Edge, same DOM, two candidates:
+
+| Candidate | `<p dir="rtl">` Arabic | `<p dir="ltr">` English |
+|---|---|---|
+| `direction: revert !important` | RIGHT ✅ | RIGHT ❌ |
+| no `direction` declaration | RIGHT ✅ | LEFT ✅ |
+
+Fix: do not declare `direction` on composer lines at all — the line's own
+`[dir]` attribute is then the only author-level authority. Keep
+`unicode-bidi: normal` and `text-align: start` there, and use
+`p:not([dir]) { direction: inherit }` for lines the engine has not reached yet.
+
+**Lesson:** `direction: revert`/`inherit` and `dir` attributes are not
+interchangeable. To honour a per-element `dir` attribute, the author must not
+set `direction` on that element at all. When a CSS cascade question is
+uncertain, measure it in a real browser (`msedge --headless --dump-dom`) rather
+than reasoning about it.
+
 ### Lessons
 - DSH patch layers only **append** through `insert:`; bare rows only override.
 - The browser module id must equal the package name.
@@ -280,7 +306,7 @@ plugin_manager({ action: "set_bundle",  target: "rtl-bidi-plugin", enabled: true
 | Old bundle still runs after edit | HMR kept the loaded generation | occupant still active but behavior old | `set_bundle` false → true, or restart DSH |
 | Install fails `already-installed` | same version already installed | `list_bundles` | `remove_bundle` then `install_bundle` |
 | Duplicate style/observer after hot reload | module-level side effects | count `<style id="dsh-rtl-bidi-css">` nodes | keep all side effects inside `useEffect`, make `install()` idempotent |
-| Composer starts on the left on the **first** line, while later lines look right | Lexical stamped `dir="auto"` on the new (still empty) paragraph, which resolves to LTR; `unicode-bidi: plaintext` reproduces it | inspect a composer `<p>`: does it still carry `dir="auto"`? does the surface carry `dir="rtl"`? does the rule say `unicode-bidi: normal`? | make sure `clearLineDirections()` runs and the `attributeFilter: ["dir"]` observer is active; remove any `plaintext` on composer lines; `set_bundle` false → true |
+| Composer: an English line under an Arabic line renders on the right | an author `direction` declaration on the line (e.g. `revert`/`inherit`) overrides the line's own `dir` attribute | inspect the line: does it have `dir="ltr"` while computed `direction` is `rtl`? does the line rule declare `direction`? | remove any `direction` declaration from the composer line rule; keep only `unicode-bidi`/`text-align` |
 | Composer direction never updates while typing | listeners removed or the module generation is stale | type one character and read the surface's `dir` attribute | re-enable the bundle (HMR does not re-run an old generation) |
 
 ---

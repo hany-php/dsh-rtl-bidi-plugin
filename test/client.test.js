@@ -624,7 +624,14 @@ test("composer CSS: surface normalises bidi, lines resolve per line", () => {
 
   const lines = findRule("[data-composer-input] p");
   assert.ok(lines !== undefined, "composer line rule present");
-  assert.match(lines.body, /direction: revert !important/, "the line's own [dir] decides");
+  // The line's own [dir] attribute must decide. ANY author `direction`
+  // declaration (inherit or revert) would override that attribute — `revert`
+  // included, because it rolls back to the UA default, which is `inherit`.
+  assert.doesNotMatch(
+    lines.body,
+    /direction\s*:/,
+    "no author direction on a line: it must come from the line's own dir attribute",
+  );
   assert.match(lines.body, /unicode-bidi: normal !important/);
 
   const fallback = findRule("[data-composer-input] p:not([dir])");
