@@ -347,8 +347,8 @@ const helpers = (() => {
     var COMPOSER_MARKER = "data-dsh-rtl-bidi-dir";
     var COMPOSER = "[data-composer-input], textarea, [contenteditable=\\"true\\"], [contenteditable=\\"\\"]";
     function isComposer(el) {
-      return el.hasAttribute("data-composer-input") || el.getAttribute("contenteditable") === "true" ||
-        el.getAttribute("contenteditable") === "" || el.tagName === "TEXTAREA" || el.tagName === "INPUT";
+      if (el.hasAttribute("data-composer-input") || el.tagName === "TEXTAREA" || el.tagName === "INPUT") return true;
+      return el.isContentEditable === true || el.getAttribute("contenteditable") !== null;
     }
     function isChromeNode(node) {
       var el = node && node.nodeType === 1 ? node : node && node.parentElement;
