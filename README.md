@@ -7,7 +7,7 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 ![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-client%20plugin-1f6feb)
 ![Platform: Web](https://img.shields.io/badge/platform-web-2ea44f)
-![Version](https://img.shields.io/badge/version-0.4.1-orange)
+![Version](https://img.shields.io/badge/version-0.4.2-orange)
 
 ---
 
@@ -24,7 +24,8 @@
 ## ماذا تفعل الإضافة
 
 - **لكل فقرة نصية اتجاه مستقل** يُستنتج من أول حرف قوي فيها: عربي → RTL، إنجليزي → LTR.
-- **صندوق الكتابة تلقائي الاتجاه سطراً بسطر**: كل سطر ياخد اتجاهه من أول حرف قوي فيه، فتكتب سطراً عربياً وسطراً إنجليزياً في نفس الرسالة، وكل واحد منهما يظهر باتجاهه الصحيح. والسطر الجديد الفاضي يرث اتجاه السطر اللي فوقه.
+- **صندوق الكتابة تلقائي الاتجاه فقرةً بفقرة**: كل فقرة تاخد اتجاهها من أول حرف قوي فيها، فتكتب فقرة عربية وفقرة إنجليزية في نفس الرسالة، وكل واحدة تظهر باتجاهها الصحيح. والفقر الجديدة الفارغة ترث اتجاه الفقرة اللي فوقها.
+  > ⚠️ استخدم **`Enter`** لبدء سطر بلغة مختلفة. أما **`Shift+Enter`** فهو فاصل سطر `<br>` **داخل نفس الفقرة**، فيبقى النصّان في سياق واحد ويحكمهما اتجاه الفقرة — راجع [الفرق بالتفصيل](#21-صندوق-المحادثة-enter-مقابل-shiftenter).
 - تشمل المعالجة: الفقرات، العناوين، القوائم النقطية والمرقمة، الاقتباسات، الجداول، وصفوف Markdown عموماً.
 - **الأكواد والطرفية والرياضيات تبقى `LTR` دائماً** ومعزولة (isolated) — لأن اقتباس كود ظاهر من اليسار لليمين هو السلوك الصحيح حتى داخل نص عربي.
 - لا تلمس منطق التطبيق ولا ملفات الجلسات ولا `app.asar`؛ التغيير عرضي محض (presentation-only).
@@ -164,22 +165,29 @@ textarea, input[type="text"], input[type="search"],
 
 سبب وضع `dir` **داخل** المكوّن (Runtime) بدل الاكتفاء بـ CSS:CSS وحدها لا تُغيّر `direction` المحسوب، لذلك نضع السمة `dir="auto"` على كل كتلة. أما الحاويات الكبيرة فنكتفي لها بـ `unicode-bidi: plaintext` حتى لا نغيّر اتجاه صناديق `flex` فتنتقل الأيقونات والأزرار في غير مكانها.
 
-### 2.1) صندوق المحادثة: لماذا `unicode-bidi` وحده لا يكفي
+### 2.1) صندوق المحادثة: `Enter` مقابل `Shift+Enter`
 
-صندوق الكتابة في DSH ليس `textarea`، بل محرر **Lexical** (`contenteditable`) يضع كل سطر في `<p>` مستقل. وهذا يفسّر العَرَض الذي كان قائماً في 0.2:
+صندوق الكتابة في DSH ليس `textarea`، بل محرر **Lexical** (`contenteditable`). وDSH يتعامل مع مفتاح الإدخال بطريقتين مختلفتين، والفرق بينهما يحدّد كيف تظهر اللغة التالية:
 
-- عند `Enter` يُنشئ Lexical **فقرة جديدة محتواها `<br>` فقط** — أي بلا أي حرف قوي. وقاعدة `unicode-bidi: plaintext` تعيد مستوى الفقرة إلى الموروث (`ltr`) حين لا تجد حرفاً قوياً، فيظهر المؤشر يساراً وتبدأ الكتابة العربية من اليسار، بينما السطر الأول (المكتوب فعلاً) يبدو صحيحاً.
-- لهذا لا تصلح `unicode-bidi` وحدها؛ الحل هو ضبط **سمة `dir` صريحة** على سطح المحرر كله، فيتبعها كل سطر جديد تلقائياً.
+| المفتاح | ماذا ينشئ في DOM | النتيجة |
+|---|---|---|
+| **`Enter`** | فقرة `<p>` جديدة | **الطريقة الموصى بها.** كل فقرة فقرة مستقلة، فتأخذ اتجاهها من أول حرف قوي فيها. اكتب سطراً عربياً ثم `Enter` ثم سطراً إنجليزياً، فيظهر كلٌّ منهما باتجاهه الصحيح. |
+| **`Shift+Enter`** | فاصل سطر `<br>` **داخل نفس الفقرة** | *ليس* سطراً مستقلاً في نظر المتصفح. النصّان يبقيان في فقرة واحدة، ومستوى الفقرة يحكم الجميع — فإن بدأت بعربي بقي السطر الإنجليزي التابع له في سياق RTL، وهذا سلوك Unicode Bidirectional الصحيح، وليس خطأً في الإضافة. |
 
-### 2.2) محرّك اتجاه صندوق المحادثة (`applyComposerDirection`)
+> **الخلاصة للمستخدم:** لو أردت أن يبدأ سطر جديد بلغة مختلفة (إنجليزي بعد عربي أو العكس)، استخدم **`Enter`** لا `Shift+Enter`. استخدم `Shift+Enter` فقط عندما تريد سطراً جديداً *داخل نفس الفقرة* — عندها يتعامل معه المتصفح كامتداد لسياق الفقرة نفسها.
 
-1. تُقرأ نصوص المحرر بترتيب الصفحة، مع تجاهل placeholder و«الشرائح» (chips) لأن نصها إنجليزي ولا يمثّل ما يكتبه المستخدم.
-2. يتم **أول حرف قوي** (UBA P2/P3) — الأرقام والمسافات وعلامات الترقيم والرموز التعبيرية كلها محايدة.
-3. تُضبط `dir="rtl"` أو `dir="ltr"` على عنصر المحرر؛ فإن كان السطر الحالي ما زال فارغاً **يبقى الاتجاه السابق**، فلا يقفز المؤشر بين Enter والحرف الأول.
-4. يعاد الحساب **فورياً** على `input`, `keydown`, `keyup`, `compositionstart/end`, `paste`, `cut`, `drop`, `selectionchange` (قبل الرسم، لا بعد إطار)، وأيضاً بعد كل تغيير في DOM كخطة احتياطية.
-5. أي `dir` يملكه المضيف بنفسه (مثل `dir="auto"` من إصدار مستقبلي) لا يُلمَس؛ وعند إلغاء التحميل يُعاد `dir` الأصلي بالضبط.
+لماذا يلزم ذلك أصلاً: يدعم Lexical سمتين مختلفتين، `insertParagraph` (فقرة جديدة) و`insertLineBreak` (فاصل سطر داخل الفقرة). الإضافة تعمل على مستوى الفقرة، لأنها الوحدة التي يملك المتصفح عندها اتجاهاً مستقلاً.
 
-الاختبارات: `npm test` (Node فقط، بلا متصفح) تغطي قاعدة أول حرف قوي، والسلوك بعد `Enter`، وتبديل الاتجاه عربي↔إنجليزي، وتجاهل الشرائح، وعدم تجاوز `dir` المضيف، والتنظيف عند الإزالة.
+### 2.2) محرّك اتجاه صندوق المحادثة (`applyLineDirections`)
+
+1. تُقرأ نصوص كل **سطر (فقرة)** على حدة، مع تجاهل placeholder و«الشرائح» (chips) لأن نصها إنجليزي ولا يمثّل ما يكتبه المستخدم.
+2. يُحدَّد **أول حرف قوي** في السطر (UBA P2/P3) — الأرقام والمسافات وعلامات الترقيم والرموز التعبيرية كلها محايدة.
+3. تُضبط `dir="rtl"` أو `dir="ltr"` على **الفقرة نفسها**، فتستطيع أن تبدأ أي فقرة باللغة التي تريد، حتى داخل نفس الرسالة.
+4. الفقرة الفارغة (أو التي تحتوي نصاً محايداً فقط) **ترث اتجاه الفقرة السابقة**، فلا يقفز المؤشر إلى الجهة الأخرى بين `Enter` والحرف الأول.
+5. مطوية `dir="auto"` التي يكتبها Lexical على كل فقرة تُستبدل باتجاه الإضافة. وأي `dir` يملكه المضيف بنفسه لا يُلمَس؛ وعند إلغاء التحميل يُعاد الأصلي بالضبط.
+6. يعاد الحساب **فورياً** على `input`, `keydown`, `keyup`, `compositionstart/end`, `paste`, `cut`, `drop`, `selectionchange`، وأيضاً عند تغيّر سمة `dir` في DOM.
+
+الاختبارات: `npm test` (Node فقط، بلا متصفح) تغطي قاعدة أول حرف قوي، وتبديل الاتجاه لكل فقرة (`rtl → ltr → rtl`)، ووراثة الفقرة الفارغة، ومسح المسودة، وتجاهل الشرائح، وعدم تجاوز `dir` المضيف، والتنظيف عند الإزالة.
 
 ### 3) وضع الاتجاه على العناصر (Runtime)
 
@@ -231,6 +239,7 @@ return {
 | النص العربي ما زال يسارياً | `dir` يُضاف فقط للعناصر التي لا تملك `dir` مسبقاً، أو العنصر ليس من الوسوم المغطاة | أضف الوسم إلى `BLOCKS`، وتأكد أن العنصر ليس داخل `EXCLUDE` |
 | الكود انقلب | قاعدة `pre, code` حُذفت أو عُدّلت | أعد قاعدة `direction: ltr; unicode-bidi: isolate` |
 | صندوق المحادثة يبدأ يساراً، أو يقفز المؤشر لليسار بعد `Enter` | السطر الفارغ في Lexical لا يحتوي حرفاً قوياً، و`unicode-bidi: plaintext` تسقط على `ltr` الموروث | تأكد من وجود قاعدة `[data-composer-input] p … direction: inherit` **و**من `applyComposerDirection` (النسخة 0.3+) |
+| سطر إنجليزي بعد سطر عربي يظهر على اليمين | استخدمت `Shift+Enter` فبقيت الفقرتان في **فقرة واحدة**، ومستوى الفقرة (RTL) يحكم النصّين معاً | اضغط **`Enter`** بدل `Shift+Enter` — [التفصيل](#21-صندوق-المحادثة-enter-مقابل-shiftenter) |
 | الإضافة تختفي بعد إعادة تشغيل | الحزمة لم تُثبَّت رسمياً (تعديل يدوي) أو حُذف رابط `node_modules` | أعد التثبيت عبر `plugin_manager install_bundle` |
 
 ## حدود معروفة
@@ -264,8 +273,9 @@ return {
 - **Install**: through the official `plugin_manager` tool — `install_bundle` with this repository's absolute path as `target`. Do not hand-edit the profile.
 - **Verify**: Host row `rtl-bidi` active, client bundle registered, and a `rtl-bidi` occupant in the `shell.overlay` slot.
 - **Design**: the bundle patch *inserts* one Host row (`insert:` is mandatory — a bare row is treated as an override and silently skipped); the client half registers a no-op React component in `shell.overlay` whose effect injects the stylesheet, tags blocks with `dir="auto"`, and observes DOM mutations; cleanup is owned by `useEffect`/`ctx.slots`.
-- **Composer (v0.3)**: the chat box is a Lexical `contenteditable`, and each line is its own `<p>`. A new line holds only an `<br>`, i.e. no strong character, so `unicode-bidi: plaintext` alone falls back to the inherited LTR for exactly that line — the first line looked right, Enter moved the caret to the left. The plugin now keeps an explicit `dir` attribute derived from the first strong character of the whole composer text, re-applied synchronously on `input`/selection events, and carries the previous direction while the current line is still empty. Tests: `npm test`.
-- **Limitations**: app chrome stays LTR; code/math stay LTR by design; document previews unaffected.
+- **Composer (v0.4)**: the chat box is a Lexical `contenteditable`; each paragraph gets its own direction from its own first strong character, so one draft can hold an Arabic paragraph and an English one. An empty paragraph inherits the direction of the one above it, so `Enter` never flips the caret, and a cleared draft forgets its old direction. Lexical's own `dir="auto"` is replaced, and no `direction` declaration is emitted on the paragraphs (any author `direction` would override their `[dir]` attribute). Tests: `npm test`.
+- **`Enter` vs `Shift+Enter`**: `Enter` creates a new paragraph (`insertParagraph`) and the plugin gives it its own direction, so the next line can start in either language. `Shift+Enter` inserts a soft `<br>` **inside the same paragraph** (`insertLineBreak`); the two texts then share one bidi context and the paragraph's direction governs both — correct Unicode behaviour, not a bug. **Use `Enter` when you want the next line in a different language.**
+- **Limitations**: app chrome stays LTR; code/math stay LTR by design; document previews unaffected; a soft break (`Shift+Enter`) cannot be directed separately from its paragraph.
 
 **For AI agents**: read [`AGENTS.md`](AGENTS.md) — it documents the contracts, build/verify workflow, failure history, modification guide, and an ideas backlog.
 
