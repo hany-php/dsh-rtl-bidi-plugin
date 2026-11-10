@@ -322,7 +322,13 @@ const helpers = (() => {
   // Pull the pure helpers out of the factory source so they can be exercised
   // without a browser; the factory body is inert until apply() is called.
   const source = read("lib/client.js");
-  const fns = ["isRtlCodePoint", "firstStrongDirection", "composerText", "applyComposerDirection"];
+  const fns = [
+    "isRtlCodePoint",
+    "firstStrongDirection",
+    "composerText",
+    "applyComposerDirection",
+    "clearLineDirections",
+  ];
   const body = fns
     .map((name) => {
       const start = source.indexOf(`function ${name}(`);
@@ -346,6 +352,7 @@ const helpers = (() => {
     var composerOriginals = [];
     var COMPOSER_MARKER = "data-dsh-rtl-bidi-dir";
     var COMPOSER = "[data-composer-input], textarea, [contenteditable=\\"true\\"], [contenteditable=\\"\\"]";
+    var LINES = "p, li, h1, h2, h3, h4, h5, h6, blockquote, div[dir]";
     function isComposer(el) {
       if (el.hasAttribute("data-composer-input") || el.tagName === "TEXTAREA" || el.tagName === "INPUT") return true;
       return el.isContentEditable === true || el.getAttribute("contenteditable") !== null;
@@ -458,15 +465,38 @@ test("composer: a host-owned dir attribute is never overridden", () => {
   assert.equal(root.getAttribute("dir"), "bogus");
 });
 
-test("composer CSS: lines inherit the composer direction instead of plaintext-only", () => {
+test("composer CSS: surface and lines inherit an explicit direction (not plaintext)", () => {
   const css = cssFor();
   const surface = /\[data-composer-input\][^{]*\{([^}]*)\}/.exec(css);
   assert.ok(surface, "composer surface rule present");
   assert.match(surface[1], /direction: start !important/);
-  assert.match(surface[1], /unicode-bidi: plaintext !important/);
-  const lines = /\[data-composer-input\] p, \[data-composer-input\] li \{([^}]*)\}/.exec(css);
-  assert.ok(lines, "composer paragraph rule present");
+  // plaintext would re-resolve the draft from its content and drop back to LTR
+  // whenever the first line is still neutral; the explicit dir must decide.
+  assert.match(surface[1], /unicode-bidi: normal !important/);
+  assert.doesNotMatch(surface[1], /unicode-bidi: plaintext/);
+
+  const lines = /\[data-composer-input\] p[^{]*\[dir\][^{]*\{([^}]*)\}/.exec(css);
+  assert.ok(lines, "composer line rule wins over Lexical's dir attribute");
   assert.match(lines[1], /direction: inherit !important/);
+  assert.match(lines[1], /unicode-bidi: normal !important/);
+});
+
+test("composer: a line carrying Lexical's dir=auto no longer decides by itself", () => {
+  // The regression: Lexical stamps dir="auto" on every paragraph it renders,
+  // and an empty line resolves that to LTR. The engine must strip it and let
+  // the editor surface's direction carry the line.
+  const { root, paragraph } = buildComposer();
+  paragraph.childNodes = [new StubText("\n")];
+  paragraph.setAttribute("dir", "auto");
+  helpers.applyComposerDirection(root);
+  assert.equal(paragraph.hasAttribute("dir"), false, "line dir attribute stripped");
+  assert.equal(root.getAttribute("dir"), null, "an all-neutral draft has no direction yet");
+
+  paragraph.childNodes = [new StubText("م")];
+  paragraph.setAttribute("dir", "auto");
+  helpers.applyComposerDirection(root);
+  assert.equal(root.getAttribute("dir"), "rtl");
+  assert.equal(paragraph.hasAttribute("dir"), false, "stripped again on the next pass");
 });
 
 /**

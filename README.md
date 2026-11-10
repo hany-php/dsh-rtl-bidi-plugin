@@ -7,7 +7,7 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 ![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-client%20plugin-1f6feb)
 ![Platform: Web](https://img.shields.io/badge/platform-web-2ea44f)
-![Version](https://img.shields.io/badge/version-0.3.0-orange)
+![Version](https://img.shields.io/badge/version-0.3.1-orange)
 
 ---
 

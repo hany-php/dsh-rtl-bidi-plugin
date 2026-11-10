@@ -80,7 +80,11 @@ There is no build tool, no `node_modules`, no bundler. The browser artifact is h
 5. **Own side effects through a slot, not module scope**: register a component in `shell.overlay` and run DOM work inside `React.useEffect`. Return the disposer so unmount removes the stylesheet, observer and injected attributes.
 6. **Never set `dir` on layout containers**: setting RTL on a flex/grid wrapper flips row order (avatars, buttons, icon positions). Put `dir` only on text-bearing blocks (`p`, `li`, headings, table cells, …). For prose wrappers use `unicode-bidi: plaintext` (CSS) without the attribute.
 7. **Code and math are always LTR isolated**: keep the `pre, code, kbd, samp, var, .katex, [class*="shiki"], [class*="codeBlock"]` rule with `direction: ltr !important; unicode-bidi: isolate !important`.
-8. **The composer needs an explicit `dir`, not only `unicode-bidi`** (v0.3+): each typed line is its own Lexical `<p>`. A new, empty line is `<p><br></p>` — no strong character — so `unicode-bidi: plaintext` resolves it as the inherited LTR. Keep `applyComposerDirection()` + the `[data-composer-input] p { direction: inherit }` rule; without them the first line looks right and every line after Enter starts on the left. The composer `dir` is set on the **editor surface only** (a block box, no flex layout), never on its shell.
+8. **The composer needs an explicit `dir` AND the per-line attribute removed** (v0.3.1+): each typed line is its own Lexical `<p>`, and Lexical's reconciler writes `dir="auto"` on every paragraph on every render. That attribute outranks anything inherited, and an empty line (`<p><br></p>`, no strong character) resolves `auto` to LTR — so the caret starts on the left. Keep all three parts:
+   - `applyComposerDirection()` — explicit `dir` on the editor surface from the draft's first strong character, sticky while the current line is empty;
+   - `clearLineDirections()` — strip `dir` from every line element so it inherits the surface direction;
+   - the CSS rule `[data-composer-input] p|li[…] { direction: inherit !important; unicode-bidi: normal !important }` — **never `plaintext`** on the composer, because `plaintext` re-resolves each line from its own content and recreates the bug.
+   The `MutationObserver` must watch `attributeFilter: ["dir"]` and undo Lexical's re-stamp (guarded against echo recursion). The composer `dir` goes on the **editor surface only** (a block box, no flex layout), never on its shell.
 9. **No hand-editing the DSH profile**: install/update only through the `plugin_manager` tool (`install_bundle`, `remove_bundle`, `set_bundle`). Do not write `$DSH_HOME/profiles/*/package.json` or `cordis.patch.yml` directly, do not run pnpm in the profile directory, and never modify `app.asar`.
 10. **Unique names**: package name, Loader row id (`rtl-bidi`) and slot occupant id (`rtl-bidi`) are unique in the profile. Do not reuse shipped ids (`shell.overlay` occupants like `context-menu`, `shortcuts`, …).
 11. **Version triple**: bump `package.json.version`, `dsh.bundle.version` and the README badge together. The browser module id stays `rtl-bidi-plugin` regardless of version (never encode the version in the id).
@@ -168,11 +172,21 @@ Root cause, confirmed in the shipped bundle (`@deepseek-ai/dsh-client-ui-convers
 - `plaintext` derives the paragraph level from the paragraph's *own* first strong character (UBA P2/P3) — an empty line has none, so it falls back to the inherited LTR while the block fills in, then snaps to RTL once the paragraph has content;
 - so "first line" vs "later lines" was really "the paragraph that already had text" vs "the one that did not", and the caret followed that level.
 
-Fix (0.3): a transparent `dir` shipping the resolved direction on the editor surface:
-- `firstStrongDirection()` reads the draft text (skipping decorator chips and the placeholder) and returns `rtl`/`ltr`/`null` for the first strong character;
-- `applyComposerDirection()` sets `dir` on the editor element, **keeps the previous direction while the current line is empty** (so Enter does not flip the caret), and is re-applied synchronously on `input`/`keydown`/`keyup`/composition/paste/cut/drop/`selectionchange` — before the browser paints the next character;
-- CSS: composer surface `direction: start` (the attribute wins), `[data-composer-input] p, li { direction: inherit }` so no line resolves its own level;
-- host-owned `dir` values are never overridden; the original value is restored on unmount.
+Fix (0.3.1) — the 0.3 attempt set `dir` on the editor surface but still lost, because of a second, decisive fact found in the Lexical code:
+
+- Lexical's DOM reconciler has a direction writer (`_e$2`) that runs for **every ElementNode on every render** and executes `element.dir = "auto"` (or removes it). So each paragraph carries its **own** `dir="auto"`, which beats anything inherited from the editor wrapper.
+- On a fresh line that paragraph is `<p><br></p>`: no strong character, so `dir="auto"` resolves to the inherited LTR → caret on the left, text after Enter starting from the left, exactly the reported symptom. A line that already contains Arabic resolves RTL, which is why later lines looked correct.
+- `unicode-bidi: plaintext` made it worse: it re-resolves each line from that line's own content, which is the very behaviour being avoided.
+
+The fix that works:
+- resolve the direction from the whole draft (`firstStrongDirection`), skipping decorator chips and the placeholder;
+- set an explicit `dir` on the **editor surface** and **strip the `dir` attribute from every line element** (`clearLineDirections`), so each line inherits the surface direction;
+- `unicode-bidi: normal` (never `plaintext`) on both the surface and the lines, plus `direction: inherit !important` on lines — and an attribute-bearing selector (`[data-composer-input] p[dir]`) so the line rule still wins whenever Lexical re-stamps the attribute;
+- a `MutationObserver` with `attributeFilter: ["dir"]` undoes Lexical's re-stamp in the same task, guarded by `undoInFlight` so its own removal cannot recurse;
+- re-apply on `input`/`key*`/composition/paste/cut/drop/`selectionchange`, and keep the previous direction while the current line is empty so Enter never flips the caret;
+- never override a host-owned `dir`; restore the original on unmount.
+
+**Lesson that matters most:** for a line-based editor (Lexical, ProseMirror, Slate), the per-node `dir` attribute the editor writes is the authority. An ancestor `dir` plus `unicode-bidi` is not enough; you must neutralise the node attribute itself.
 
 ### Lessons
 - DSH patch layers only **append** through `insert:`; bare rows only override.
@@ -251,8 +265,8 @@ plugin_manager({ action: "set_bundle",  target: "rtl-bidi-plugin", enabled: true
 | Old bundle still runs after edit | HMR kept the loaded generation | occupant still active but behavior old | `set_bundle` false → true, or restart DSH |
 | Install fails `already-installed` | same version already installed | `list_bundles` | `remove_bundle` then `install_bundle` |
 | Duplicate style/observer after hot reload | module-level side effects | count `<style id="dsh-rtl-bidi-css">` nodes | keep all side effects inside `useEffect`, make `install()` idempotent |
-| Composer starts on the left, or the caret jumps left after Enter | composer has no explicit `dir`; each empty Lexical `<p>` has no strong character and resolves to LTR | inspect `[data-composer-input]`: does it carry `dir="rtl"`/`dir="ltr"`? is `<style id="dsh-rtl-bidi-css">` present with the `[data-composer-input] p` rule? | restore `applyComposerDirection()` + its listeners and the inherit rule; `set_bundle` false → true |
-| Composer direction never updates while typing | listeners removed or the module generation is stale | type one character and read the `dir` attribute | re-enable the bundle (HMR does not re-run an old generation) |
+| Composer starts on the left on the **first** line, while later lines look right | Lexical stamped `dir="auto"` on the new (still empty) paragraph, which resolves to LTR; `unicode-bidi: plaintext` reproduces it | inspect a composer `<p>`: does it still carry `dir="auto"`? does the surface carry `dir="rtl"`? does the rule say `unicode-bidi: normal`? | make sure `clearLineDirections()` runs and the `attributeFilter: ["dir"]` observer is active; remove any `plaintext` on composer lines; `set_bundle` false → true |
+| Composer direction never updates while typing | listeners removed or the module generation is stale | type one character and read the surface's `dir` attribute | re-enable the bundle (HMR does not re-run an old generation) |
 
 ---
 
