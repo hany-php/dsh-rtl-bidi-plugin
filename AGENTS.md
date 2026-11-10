@@ -80,11 +80,14 @@ There is no build tool, no `node_modules`, no bundler. The browser artifact is h
 5. **Own side effects through a slot, not module scope**: register a component in `shell.overlay` and run DOM work inside `React.useEffect`. Return the disposer so unmount removes the stylesheet, observer and injected attributes.
 6. **Never set `dir` on layout containers**: setting RTL on a flex/grid wrapper flips row order (avatars, buttons, icon positions). Put `dir` only on text-bearing blocks (`p`, `li`, headings, table cells, …). For prose wrappers use `unicode-bidi: plaintext` (CSS) without the attribute.
 7. **Code and math are always LTR isolated**: keep the `pre, code, kbd, samp, var, .katex, [class*="shiki"], [class*="codeBlock"]` rule with `direction: ltr !important; unicode-bidi: isolate !important`.
-8. **The composer needs an explicit `dir` AND the per-line attribute removed** (v0.3.1+): each typed line is its own Lexical `<p>`, and Lexical's reconciler writes `dir="auto"` on every paragraph on every render. That attribute outranks anything inherited, and an empty line (`<p><br></p>`, no strong character) resolves `auto` to LTR — so the caret starts on the left. Keep all three parts:
-   - `applyComposerDirection()` — explicit `dir` on the editor surface from the draft's first strong character, sticky while the current line is empty;
-   - `clearLineDirections()` — strip `dir` from every line element so it inherits the surface direction;
-   - the CSS rule `[data-composer-input] p|li[…] { direction: inherit !important; unicode-bidi: normal !important }` — **never `plaintext`** on the composer, because `plaintext` re-resolves each line from its own content and recreates the bug.
-   The `MutationObserver` must watch `attributeFilter: ["dir"]` and undo Lexical's re-stamp (guarded against echo recursion). The composer `dir` goes on the **editor surface only** (a block box, no flex layout), never on its shell.
+8. **The composer resolves direction PER LINE** (v0.4+): each typed line is its own Lexical `<p>`, and Lexical's reconciler writes `dir="auto"` on every paragraph on every render. That attribute outranks anything inherited, and an empty line (`<p><br></p>`, no strong character) resolves `auto` to LTR. Keep all four parts:
+   - `applyDraftDirection()` — a draft-level `dir` on the editor surface (fallback for content outside any line, and the starting direction when the first line is neutral);
+   - `applyLineDirections()` — each line gets its **own** `dir` from its own first strong character, so an Arabic line is RTL and an English line in the same draft is LTR; a neutral line inherits the direction of the nearest decisive line above it (so Enter does not flip the caret);
+   - `lineText()` — per-line text, skipping placeholder and decorator (chip) subtrees;
+   - the CSS: surface `unicode-bidi: normal`, lines `unicode-bidi: normal` + `direction: revert !important` (the line's own `[dir]` decides) and a `:not([dir])` rule re-applying `inherit`. **Never `plaintext`** on the composer — it re-resolves each line from its own content and recreates the bug.
+   The `MutationObserver` watches `attributeFilter: ["dir"]` and re-resolves in the same task. The composer `dir` goes on the **editor surface only** (a block box, no flex layout), never on its shell.
+
+   Behaviour chosen by the user (2026-11-10): the direction scope is **per line**, and a new empty line **inherits the line above it**.
 9. **No hand-editing the DSH profile**: install/update only through the `plugin_manager` tool (`install_bundle`, `remove_bundle`, `set_bundle`). Do not write `$DSH_HOME/profiles/*/package.json` or `cordis.patch.yml` directly, do not run pnpm in the profile directory, and never modify `app.asar`.
 10. **Unique names**: package name, Loader row id (`rtl-bidi`) and slot occupant id (`rtl-bidi`) are unique in the profile. Do not reuse shipped ids (`shell.overlay` occupants like `context-menu`, `shortcuts`, …).
 11. **Version triple**: bump `package.json.version`, `dsh.bundle.version` and the README badge together. The browser module id stays `rtl-bidi-plugin` regardless of version (never encode the version in the id).
@@ -187,6 +190,18 @@ The fix that works:
 - never override a host-owned `dir`; restore the original on unmount.
 
 **Lesson that matters most:** for a line-based editor (Lexical, ProseMirror, Slate), the per-node `dir` attribute the editor writes is the authority. An ancestor `dir` plus `unicode-bidi` is not enough; you must neutralise the node attribute itself.
+
+### Attempt 4 (v0.4.0) — per-line direction in the composer
+After 0.3.1 the first line was finally correct, but the user asked a fair
+follow-up: *"what if I want a line to start in English?"* With a draft-level
+direction the whole draft followed its first strong character, so an English
+line under an Arabic first line was forced RTL.
+
+Change: resolve the direction **per line** (`applyLineDirections`) — each line
+gets its own `dir` from its own first strong character, a neutral line inherits
+the nearest decisive line above it, and the surface keeps a draft-level
+fallback (`applyDraftDirection`). Also fixed: an emptied draft now forgets its
+old direction instead of carrying a stale `rtl`/`ltr` into the next message.
 
 ### Lessons
 - DSH patch layers only **append** through `insert:`; bare rows only override.
