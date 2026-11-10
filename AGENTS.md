@@ -16,9 +16,10 @@ This repository is a **DeepSeek Harness (DSH) client plugin**, not a standalone 
 | Client half | `lib/client.js` — `window.__ModuleLoader__.load({ id, factory })` |
 | Browser module id | **must equal** the package `name` (`rtl-bidi-plugin`) |
 | Runtime extension point | `shell.overlay` slot (frame-wide), `id: rtl-bidi`, component renders `null` |
-| Effect | inject `<style id="dsh-rtl-bidi-css">`, set `dir="auto"` on text blocks, observe DOM |
+| Effect | inject `<style id="dsh-rtl-bidi-css">`, set `dir="auto"` on text blocks, keep an explicit `dir` on the composer, observe DOM + input events |
 | Dependencies | none (React comes from the platform module table) |
 | Build step | none for this package (browser file is authored in ModuleLoader format) |
+| Tests | `npm test` → `node --test test/*.test.js` (no dependencies, no browser) |
 | License | MIT |
 
 If you change only one thing, keep this invariant: **the Loader row must be inserted, and the client module id must equal the package name.**
@@ -32,9 +33,7 @@ The DSH Web UI is LTR by default. A paragraph mixing Arabic and English therefor
 - Arabic-first block → RTL, right-aligned;
 - English-first block → LTR, left-aligned;
 - code, terminal output, KaTeX math → forced LTR and isolated (correct even inside Arabic prose);
-- composer (textarea/contenteditable) → direction follows the first strong character while typing.
-
-It works for any Mixed-direction script, not only Arabic/English, because it relies on the Unicode Bidirectional Algorithm (UBA) paragraph rules P2/P3.
+- composer (a Lexical `contenteditable`, one `<p>` per line) → an explicit `dir` attribute that follows the first strong character of the whole draft and is re-applied synchronously while typing.
 
 **It is presentation-only.** No session data, no request content, no model behavior, no `app.asar` changes.
 
@@ -48,7 +47,9 @@ It works for any Mixed-direction script, not only Arabic/English, because it rel
 ├── cordis.patch.yml      # Loader patch layer: insert the rtl-bidi row
 ├── lib/
 │   ├── index.js          # Host half (no-op apply)
-│   └── client.js         # Browser half: styles + dir=auto + MutationObserver + slot entry
+│   └── client.js         # Browser half: styles + dir=auto + composer engine + observer + slot entry
+├── test/
+│   └── client.test.js    # node --test: contract + composer behaviour against a DOM stub
 ├── locale/en.json        # Plugin Manager title/description (meta.title, meta.description)
 ├── icon.svg              # Plugin icon (original artwork, MIT)
 ├── README.md             # User-facing docs (Arabic + English overview)
@@ -79,9 +80,10 @@ There is no build tool, no `node_modules`, no bundler. The browser artifact is h
 5. **Own side effects through a slot, not module scope**: register a component in `shell.overlay` and run DOM work inside `React.useEffect`. Return the disposer so unmount removes the stylesheet, observer and injected attributes.
 6. **Never set `dir` on layout containers**: setting RTL on a flex/grid wrapper flips row order (avatars, buttons, icon positions). Put `dir` only on text-bearing blocks (`p`, `li`, headings, table cells, …). For prose wrappers use `unicode-bidi: plaintext` (CSS) without the attribute.
 7. **Code and math are always LTR isolated**: keep the `pre, code, kbd, samp, var, .katex, [class*="shiki"], [class*="codeBlock"]` rule with `direction: ltr !important; unicode-bidi: isolate !important`.
-8. **No hand-editing the DSH profile**: install/update only through the `plugin_manager` tool (`install_bundle`, `remove_bundle`, `set_bundle`). Do not write `$DSH_HOME/profiles/*/package.json` or `cordis.patch.yml` directly, do not run pnpm in the profile directory, and never modify `app.asar`.
-9. **Unique names**: package name, Loader row id (`rtl-bidi`) and slot occupant id (`rtl-bidi`) are unique in the profile. Do not reuse shipped ids (`shell.overlay` occupants like `context-menu`, `shortcuts`, …).
-10. **Version triple**: bump `package.json.version`, `dsh.bundle.version` and the README badge together. The browser module id stays `rtl-bidi-plugin` regardless of version (never encode the version in the id).
+8. **The composer needs an explicit `dir`, not only `unicode-bidi`** (v0.3+): each typed line is its own Lexical `<p>`. A new, empty line is `<p><br></p>` — no strong character — so `unicode-bidi: plaintext` resolves it as the inherited LTR. Keep `applyComposerDirection()` + the `[data-composer-input] p { direction: inherit }` rule; without them the first line looks right and every line after Enter starts on the left. The composer `dir` is set on the **editor surface only** (a block box, no flex layout), never on its shell.
+9. **No hand-editing the DSH profile**: install/update only through the `plugin_manager` tool (`install_bundle`, `remove_bundle`, `set_bundle`). Do not write `$DSH_HOME/profiles/*/package.json` or `cordis.patch.yml` directly, do not run pnpm in the profile directory, and never modify `app.asar`.
+10. **Unique names**: package name, Loader row id (`rtl-bidi`) and slot occupant id (`rtl-bidi`) are unique in the profile. Do not reuse shipped ids (`shell.overlay` occupants like `context-menu`, `shortcuts`, …).
+11. **Version triple**: bump `package.json.version`, `dsh.bundle.version` and the README badge together. The browser module id stays `rtl-bidi-plugin` regardless of version (never encode the version in the id).
 
 ---
 
@@ -158,12 +160,28 @@ The Loader treated it as an override of a non-existing row and skipped it. Nothi
 - Verified live: Host entry `include:rtl-bidi` active, and the Client Slot tree shows occupant `rtl-bidi` (`active: true`) in `shell.overlay`.
 - Installed through the official `plugin_manager` path (`remove_bundle` then `install_bundle` when replacing a manually installed copy), applied live via HMR.
 
+### Attempt 3 (v0.2) — composer direction with `unicode-bidi: plaintext` only
+The 0.2 composer rules relied on `unicode-bidi: plaintext` on the `contenteditable`. Symptom reported by the user: **the first line started on the left while typing Arabic; moving to a new line made it right; after Enter the caret sat on the left until a character was typed.**
+
+Root cause, confirmed in the shipped bundle (`@deepseek-ai/dsh-client-ui-conversation`, `ComposerContentEditable` → `data-composer-input`):
+- the composer is a **Lexical** editor; each line is its own `<p>`, and a fresh line is `<p><br></p>`;
+- `plaintext` derives the paragraph level from the paragraph's *own* first strong character (UBA P2/P3) — an empty line has none, so it falls back to the inherited LTR while the block fills in, then snaps to RTL once the paragraph has content;
+- so "first line" vs "later lines" was really "the paragraph that already had text" vs "the one that did not", and the caret followed that level.
+
+Fix (0.3): a transparent `dir` shipping the resolved direction on the editor surface:
+- `firstStrongDirection()` reads the draft text (skipping decorator chips and the placeholder) and returns `rtl`/`ltr`/`null` for the first strong character;
+- `applyComposerDirection()` sets `dir` on the editor element, **keeps the previous direction while the current line is empty** (so Enter does not flip the caret), and is re-applied synchronously on `input`/`keydown`/`keyup`/composition/paste/cut/drop/`selectionchange` — before the browser paints the next character;
+- CSS: composer surface `direction: start` (the attribute wins), `[data-composer-input] p, li { direction: inherit }` so no line resolves its own level;
+- host-owned `dir` values are never overridden; the original value is restored on unmount.
+
 ### Lessons
 - DSH patch layers only **append** through `insert:`; bare rows only override.
 - The browser module id must equal the package name.
 - Prefer the official install path; never hand-edit the profile.
 - Verify through inspection (`Config`, `Slots`, bundle `rows`), not just through process state or logs.
 - Do not patch `app.asar`; use the plugin system.
+- **`unicode-bidi: plaintext` is per-element, not per-draft.** It cannot make an *empty* line inherit a direction; only an explicit `dir` on an ancestor (here the editor surface) can. Anything typed line-by-line (Lexical, ProseMirror, Slate) needs the attribute, not just the CSS value.
+- To reason about DSH internals, read the shipped bundle. `app.asar` can be read with a tiny Python ASAR reader (read the 16-byte header, parse the JSON index, then slice `offset..offset+size`); this is read-only inspection, not patching.
 
 ---
 
@@ -175,19 +193,18 @@ There is **no build step**. Validation recipes:
 
 ```bash
 node --check lib/client.js
-node --check lib/index.js   # for ESM use --input-type=module --check or an .mjs copy
+node --input-type=module --check < lib/index.js   # the Host half is ESM
 ```
 
-Contract check without a DOM (run from a scratch script; do not commit browser emulation):
+Comment check without a DOM: not needed — the committed suite already loads `lib/client.js` in a `vm` context with stubbed `window`/`document`, so it runs with no browser.
 
-```js
-// pseudo-steps
-// 1. create sandbox with window.__ModuleLoader__.load capturing the spec
-// 2. vm.runInContext(file content)
-// 3. assert spec.id === require("./package.json").name
-// 4. const mod = spec.factory(() => ({}));   // React unused at factory time
-// 5. assert typeof mod.apply === "function" && Array.isArray(mod.inject)
+The committed suite does exactly this and more:
+
+```bash
+npm test          # == node --test test/*.test.js
 ```
+
+`test/client.test.js` reads `lib/client.js` from disk, captures the ModuleLoader spec in a `vm` context, and runs the plugin against a hand-written DOM stub. It covers: module id === package name, factory shape, `insert:`-only patch, no `dir` on containers, LTR-isolated code rule, the first-strong-character resolver, and the composer engine (empty draft, Arabic, Enter on an empty line, ar↔en switching, chips/placeholder ignored, host `dir` respected, unmount restore). Keep it dependency-free; parse `package.json` with `JSON.parse`, never `require`.
 
 ### 7.2 Install / update (inside a DSH agent session)
 
@@ -234,6 +251,8 @@ plugin_manager({ action: "set_bundle",  target: "rtl-bidi-plugin", enabled: true
 | Old bundle still runs after edit | HMR kept the loaded generation | occupant still active but behavior old | `set_bundle` false → true, or restart DSH |
 | Install fails `already-installed` | same version already installed | `list_bundles` | `remove_bundle` then `install_bundle` |
 | Duplicate style/observer after hot reload | module-level side effects | count `<style id="dsh-rtl-bidi-css">` nodes | keep all side effects inside `useEffect`, make `install()` idempotent |
+| Composer starts on the left, or the caret jumps left after Enter | composer has no explicit `dir`; each empty Lexical `<p>` has no strong character and resolves to LTR | inspect `[data-composer-input]`: does it carry `dir="rtl"`/`dir="ltr"`? is `<style id="dsh-rtl-bidi-css">` present with the `[data-composer-input] p` rule? | restore `applyComposerDirection()` + its listeners and the inherit rule; `set_bundle` false → true |
+| Composer direction never updates while typing | listeners removed or the module generation is stale | type one character and read the `dir` attribute | re-enable the bundle (HMR does not re-run an old generation) |
 
 ---
 
@@ -276,8 +295,8 @@ Ordered roughly from low to high effort/risk:
 5. **Config and settings**: a settings row to enable/disable bidi handling for tool outputs, code isolation, or per-panel scopes; `Config` schema on the Host side with `volatile` fields where appropriate.
 6. **Full RTL UI mode (opt-in)**: a documented mode that sets `document.documentElement.dir = "rtl"` and overrides theme tokens for line-height/spacing; must keep code LTR and must not break the sidebar. High risk: needs a broad visual audit.
 7. **Third-party coverage**: a "wide mode" that also handles text-only `div` blocks heuristically (e.g., `div` with text child and no child elements) — measure false positives first.
-8. **Tests**: a tiny contract test (`node --test`) that asserts module id === package name, factory shape, and CSS/selector invariants (no DOM emulation needed for these). A second test can validate the patch YAML shape (top-level `insert`).
-9. **CI**: GitHub Action running `node --check`, JSON/YAML parse, and the contract test on push/PR.
+8. **Tests** (done in 0.3): `test/client.test.js` covers the module id, factory shape, `insert:`-only patch and CSS invariants, plus the composer engine against a DOM stub. Extend it rather than adding a second framework.
+9. **CI**: GitHub Action running `node --check`, `npm test` and a JSON/YAML parse on push/PR.
 10. **Locale packs**: Arabic description for Plugin Manager display where DSH supports the locale; keep `en` fallback.
 11. **Performance**: throttle scans with `requestAnimationFrame`; skip subtrees under code blocks early; use a single observer root; measure long transcripts.
 12. **Telemetry-free diagnostics**: expose an optional debug mode (via `localStorage` flag) that logs how many blocks were tagged, for field debugging without a devtools session.

@@ -7,7 +7,7 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 ![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-client%20plugin-1f6feb)
 ![Platform: Web](https://img.shields.io/badge/platform-web-2ea44f)
-![Version](https://img.shields.io/badge/version-0.2.0-orange)
+![Version](https://img.shields.io/badge/version-0.3.0-orange)
 
 ---
 
@@ -146,15 +146,40 @@ pre, code, kbd, samp, var, .katex, .katex *,
   text-align: left !important;
 }
 
-/* صندوق الكتابة */
+/* صندوق الكتابة: الاتجاه من أول حرف قوي في النص كله */
 textarea, input[type="text"], input[type="search"],
-[contenteditable="true"], [contenteditable=""] {
+[contenteditable="true"], [contenteditable=""], [data-composer-input] {
   unicode-bidi: plaintext !important;
   text-align: start !important;
+  direction: start !important;
+}
+
+/* كل سطر داخل صندوق المحادثة يتبع اتجاه الصندوق نفسه */
+[data-composer-input] p, [data-composer-input] li {
+  unicode-bidi: plaintext !important;
+  text-align: start !important;
+  direction: inherit !important;
 }
 ```
 
 سبب وضع `dir` **داخل** المكوّن (Runtime) بدل الاكتفاء بـ CSS:CSS وحدها لا تُغيّر `direction` المحسوب، لذلك نضع السمة `dir="auto"` على كل كتلة. أما الحاويات الكبيرة فنكتفي لها بـ `unicode-bidi: plaintext` حتى لا نغيّر اتجاه صناديق `flex` فتنتقل الأيقونات والأزرار في غير مكانها.
+
+### 2.1) صندوق المحادثة: لماذا `unicode-bidi` وحده لا يكفي
+
+صندوق الكتابة في DSH ليس `textarea`، بل محرر **Lexical** (`contenteditable`) يضع كل سطر في `<p>` مستقل. وهذا يفسّر العَرَض الذي كان قائماً في 0.2:
+
+- عند `Enter` يُنشئ Lexical **فقرة جديدة محتواها `<br>` فقط** — أي بلا أي حرف قوي. وقاعدة `unicode-bidi: plaintext` تعيد مستوى الفقرة إلى الموروث (`ltr`) حين لا تجد حرفاً قوياً، فيظهر المؤشر يساراً وتبدأ الكتابة العربية من اليسار، بينما السطر الأول (المكتوب فعلاً) يبدو صحيحاً.
+- لهذا لا تصلح `unicode-bidi` وحدها؛ الحل هو ضبط **سمة `dir` صريحة** على سطح المحرر كله، فيتبعها كل سطر جديد تلقائياً.
+
+### 2.2) محرّك اتجاه صندوق المحادثة (`applyComposerDirection`)
+
+1. تُقرأ نصوص المحرر بترتيب الصفحة، مع تجاهل placeholder و«الشرائح» (chips) لأن نصها إنجليزي ولا يمثّل ما يكتبه المستخدم.
+2. يتم **أول حرف قوي** (UBA P2/P3) — الأرقام والمسافات وعلامات الترقيم والرموز التعبيرية كلها محايدة.
+3. تُضبط `dir="rtl"` أو `dir="ltr"` على عنصر المحرر؛ فإن كان السطر الحالي ما زال فارغاً **يبقى الاتجاه السابق**، فلا يقفز المؤشر بين Enter والحرف الأول.
+4. يعاد الحساب **فورياً** على `input`, `keydown`, `keyup`, `compositionstart/end`, `paste`, `cut`, `drop`, `selectionchange` (قبل الرسم، لا بعد إطار)، وأيضاً بعد كل تغيير في DOM كخطة احتياطية.
+5. أي `dir` يملكه المضيف بنفسه (مثل `dir="auto"` من إصدار مستقبلي) لا يُلمَس؛ وعند إلغاء التحميل يُعاد `dir` الأصلي بالضبط.
+
+الاختبارات: `npm test` (Node فقط، بلا متصفح) تغطي قاعدة أول حرف قوي، والسلوك بعد `Enter`، وتبديل الاتجاه عربي↔إنجليزي، وتجاهل الشرائح، وعدم تجاوز `dir` المضيف، والتنظيف عند الإزالة.
 
 ### 3) وضع الاتجاه على العناصر (Runtime)
 
@@ -205,6 +230,7 @@ return {
 | معرّف الوحدة لا يطابق الحزمة | `id` في `ModuleLoader.load` يجب أن يساوي `name` في `package.json` | وحّدهما |
 | النص العربي ما زال يسارياً | `dir` يُضاف فقط للعناصر التي لا تملك `dir` مسبقاً، أو العنصر ليس من الوسوم المغطاة | أضف الوسم إلى `BLOCKS`، وتأكد أن العنصر ليس داخل `EXCLUDE` |
 | الكود انقلب | قاعدة `pre, code` حُذفت أو عُدّلت | أعد قاعدة `direction: ltr; unicode-bidi: isolate` |
+| صندوق المحادثة يبدأ يساراً، أو يقفز المؤشر لليسار بعد `Enter` | السطر الفارغ في Lexical لا يحتوي حرفاً قوياً، و`unicode-bidi: plaintext` تسقط على `ltr` الموروث | تأكد من وجود قاعدة `[data-composer-input] p … direction: inherit` **و**من `applyComposerDirection` (النسخة 0.3+) |
 | الإضافة تختفي بعد إعادة تشغيل | الحزمة لم تُثبَّت رسمياً (تعديل يدوي) أو حُذف رابط `node_modules` | أعد التثبيت عبر `plugin_manager install_bundle` |
 
 ## حدود معروفة
@@ -220,9 +246,10 @@ return {
 المساهمات والاقتراحات مرحّب بها عبر Issues أو Pull Requests. قبل أي PR:
 
 1. تأكد أن `node --check lib/client.js` يمر.
-2. تأكد أن `id` في `lib/client.js` ما زال مطابقاً لاسم الحزمة.
-3. جرّب mixed text في المحادثة وصندوق الكتابة، وتأكد أن كتل الكود ما زالت LTR.
-4. حدّث `version` في `package.json` و`dsh.bundle.version` معاً، وحدّث `AGENTS.md` إن غيّرت العقود.
+2. تأكد أن `npm test` يمر (بلا اعتماديات).
+3. تأكد أن `id` في `lib/client.js` ما زال مطابقاً لاسم الحزمة.
+4. جرّب mixed text في المحادثة وصندوق الكتابة، وتأكد أن كتل الكود ما زالت LTR.
+5. حدّث `version` في `package.json` و`dsh.bundle.version` معاً، وحدّث `AGENTS.md` إن غيّرت العقود.
 
 ## الترخيص
 
@@ -237,6 +264,7 @@ return {
 - **Install**: through the official `plugin_manager` tool — `install_bundle` with this repository's absolute path as `target`. Do not hand-edit the profile.
 - **Verify**: Host row `rtl-bidi` active, client bundle registered, and a `rtl-bidi` occupant in the `shell.overlay` slot.
 - **Design**: the bundle patch *inserts* one Host row (`insert:` is mandatory — a bare row is treated as an override and silently skipped); the client half registers a no-op React component in `shell.overlay` whose effect injects the stylesheet, tags blocks with `dir="auto"`, and observes DOM mutations; cleanup is owned by `useEffect`/`ctx.slots`.
+- **Composer (v0.3)**: the chat box is a Lexical `contenteditable`, and each line is its own `<p>`. A new line holds only an `<br>`, i.e. no strong character, so `unicode-bidi: plaintext` alone falls back to the inherited LTR for exactly that line — the first line looked right, Enter moved the caret to the left. The plugin now keeps an explicit `dir` attribute derived from the first strong character of the whole composer text, re-applied synchronously on `input`/selection events, and carries the previous direction while the current line is still empty. Tests: `npm test`.
 - **Limitations**: app chrome stays LTR; code/math stay LTR by design; document previews unaffected.
 
 **For AI agents**: read [`AGENTS.md`](AGENTS.md) — it documents the contracts, build/verify workflow, failure history, modification guide, and an ideas backlog.

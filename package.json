@@ -1,10 +1,14 @@
 {
   "name": "rtl-bidi-plugin",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Bilingual Arabic/English bidi fix for the DeepSeek Harness Web client: per-block base direction, isolated code blocks, auto-direction composer.",
   "type": "module",
   "main": "lib/index.js",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "check": "node --check lib/client.js"
+  },
   "exports": {
     ".": "./lib/index.js",
     "./client": "./lib/client.js",
@@ -25,7 +29,7 @@
   "dsh": {
     "bundle": {
       "id": "rtl-bidi-plugin",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "patch": "./cordis.patch.yml"
     },
     "client": {
